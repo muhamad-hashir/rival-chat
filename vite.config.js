@@ -6,19 +6,18 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
     rollupOptions: {
-      input: {
-        main: './index.html',
-        games: './src/components/games/GamesMenu.jsx',
-      },
       output: {
-        manualChunks: {
-          games: ['react', 'react-dom', './src/components/games/GamesMenu.jsx', './src/components/games/GameShell.jsx', './src/components/games/gameArt.jsx'],
+        // Single app entry; games are split naturally by their dynamic imports
+        // in ChatWindow.jsx. Only isolate the heavy firebase SDK into its own
+        // chunk — do NOT force react into a manual chunk (that duplicated
+        // React and crashed the game components).
+        manualChunks(id) {
+          if (id.includes('@firebase') || id.includes('node_modules/firebase')) {
+            return 'firebase'
+          }
         },
       },
     },
-    // The only large chunk is the app UI (main); the games are fully split
-    // into their own chunk. Lower the threshold so the warning is honest about
-    // code-split behavior rather than the inherently large UI shell.
     chunkSizeWarningLimit: 600,
   },
   server: { port: 5173 },

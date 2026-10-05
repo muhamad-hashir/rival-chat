@@ -41,9 +41,10 @@ export default function App() {
   }
 
   return (
-    <div className="flex min-h-dvh flex-col bg-ink">
-      {/* main chat layout */}
-      <main className="mx-auto flex w-full max-w-[1400px] flex-1 overflow-hidden md:h-dvh md:p-4">
+    <div className="flex h-dvh flex-col overflow-hidden bg-ink">
+      {/* main chat layout — viewport-locked so only the message list scrolls
+          and the chat header (name + status + Games) always stays visible */}
+      <main className="mx-auto flex w-full max-w-[1400px] flex-1 overflow-hidden md:p-4">
         <div className="flex w-full overflow-hidden rounded-none border-0 shadow-none md:rounded-2xl md:border md:border-line/60 md:shadow-[0_24px_70px_rgba(0,0,0,0.45)]">
           {/* sidebar — full on mobile when no chat open, always on desktop */}
           <div

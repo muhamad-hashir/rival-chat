@@ -5,13 +5,20 @@ import MessageBubble, { TypingBubble, DateDivider } from './MessageBubble.jsx'
 import { chatIdFor, dayLabel } from '../utils.js'
 import { IconArrowLeft, IconGamepad, IconSend, IconX } from './Icons.jsx'
 
+const GAME_FILES = {
+  tictactoe: 'TicTacToe',
+  rps: 'RPS',
+  connect4: 'ConnectFour',
+  ladsnake: 'SnakesLadders',
+}
+
 async function loadGameComp(id) {
-  const mod = await import(`./games/${id}.jsx`)
+  const mod = await import(`./games/${GAME_FILES[id]}.jsx`)
   return mod.default || mod
 }
-async function loadGamesMenu(friendName) {
+async function loadGamesMenu() {
   const mod = await import('./games/GamesMenu.jsx')
-  return { default: mod.default || mod, friendName }
+  return mod.default || mod
 }
 async function loadGameShell() {
   const mod = await import('./games/GameShell.jsx')
@@ -56,8 +63,8 @@ export default function ChatWindow({ me, friend, statuses, onBack, className = '
   useEffect(() => {
     if (!menuOpen) return
     let cancelled = false
-    loadGamesMenu(friend.name).then(({ default: C }) => {
-      if (!cancelled) setGamesMenuComp(C)
+    loadGamesMenu().then((C) => {
+      if (!cancelled) setGamesMenuComp(() => C)
     })
     return () => {
       cancelled = true
@@ -68,7 +75,7 @@ export default function ChatWindow({ me, friend, statuses, onBack, className = '
     if (!game) return
     let cancelled = false
     loadGameShell().then((C) => {
-      if (!cancelled) setGameShellComp(C)
+      if (!cancelled) setGameShellComp(() => C)
     })
     return () => {
       cancelled = true
@@ -77,8 +84,8 @@ export default function ChatWindow({ me, friend, statuses, onBack, className = '
 
   async function openGame(id) {
     setMenuOpen(false)
-    const GameComp = await loadGameComp(id)
-    setGameComp(GameComp)
+    const Comp = await loadGameComp(id)
+    setGameComp(() => Comp)
     setGame(id)
   }
 
