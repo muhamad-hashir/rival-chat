@@ -5,8 +5,15 @@ import MessageBubble, { TypingBubble, DateDivider } from './MessageBubble.jsx'
 import { chatIdFor, dayLabel } from '../utils.js'
 import { IconArrowLeft, IconGamepad, IconSend, IconX } from './Icons.jsx'
 
+const GAME_FILES = {
+  tictactoe: 'TicTacToe',
+  rps: 'RPS',
+  connect4: 'ConnectFour',
+  ladsnake: 'SnakesLadders',
+}
+
 async function loadGameComp(id) {
-  const mod = await import(`./games/${id}.jsx`)
+  const mod = await import(`./games/${GAME_FILES[id]}.jsx`)
   return mod.default || mod
 }
 async function loadGamesMenu() {
@@ -67,7 +74,7 @@ export default function ChatWindow({ me, friend, statuses, onBack, className = '
     if (!menuOpen) return
     let cancelled = false
     loadGamesMenu().then((C) => {
-      if (!cancelled) setGamesMenuComp(C)
+      if (!cancelled) setGamesMenuComp(() => C)
     })
     return () => {
       cancelled = true
@@ -78,7 +85,7 @@ export default function ChatWindow({ me, friend, statuses, onBack, className = '
     if (!game) return
     let cancelled = false
     loadGameShell().then((C) => {
-      if (!cancelled) setGameShellComp(C)
+      if (!cancelled) setGameShellComp(() => C)
     })
     return () => {
       cancelled = true
@@ -88,7 +95,7 @@ export default function ChatWindow({ me, friend, statuses, onBack, className = '
   async function openGame(id) {
     setMenuOpen(false)
     const Comp = await loadGameComp(id)
-    setGameComp(Comp)
+    setGameComp(() => Comp)
     setGame(id)
   }
 
