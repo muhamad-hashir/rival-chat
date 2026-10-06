@@ -5,15 +5,8 @@ import MessageBubble, { TypingBubble, DateDivider } from './MessageBubble.jsx'
 import { chatIdFor, dayLabel } from '../utils.js'
 import { IconArrowLeft, IconGamepad, IconSend, IconX } from './Icons.jsx'
 
-const GAME_FILES = {
-  tictactoe: 'TicTacToe',
-  rps: 'RPS',
-  connect4: 'ConnectFour',
-  ladsnake: 'SnakesLadders',
-}
-
 async function loadGameComp(id) {
-  const mod = await import(`./games/${GAME_FILES[id]}.jsx`)
+  const mod = await import(`./games/${id}.jsx`)
   return mod.default || mod
 }
 async function loadGamesMenu() {
@@ -32,8 +25,17 @@ const GAME_TITLES = {
 }
 
 export default function ChatWindow({ me, friend, statuses, onBack, className = '' }) {
-  const { messages, friendTyping, sendMessage, notifyTyping, deleteMessage } = useChat(me, friend)
+  const {
+    messages,
+    friendTyping,
+    sendMessage,
+    notifyTyping,
+    deleteForEveryone,
+    deleteForMe,
+    toggleReaction,
+  } = useChat(me, friend)
   const [draft, setDraft] = useState('')
+  const [replyTo, setReplyTo] = useState(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [game, setGame] = useState(null)
   const [GameComp, setGameComp] = useState(null)
@@ -50,13 +52,14 @@ export default function ChatWindow({ me, friend, statuses, onBack, className = '
     if (el) el.scrollTop = el.scrollHeight
   }, [messages.length, friendTyping, friend.uid])
 
-  // reset overlays when switching friend
+  // reset overlays + reply when switching friend
   useEffect(() => {
     setMenuOpen(false)
     setGame(null)
     setGameComp(null)
     setGamesMenuComp(null)
     setGameShellComp(null)
+    setReplyTo(null)
   }, [friend.uid])
 
   // lazy-load the overlay UIs on first use (they only render when gaming)
@@ -64,18 +67,18 @@ export default function ChatWindow({ me, friend, statuses, onBack, className = '
     if (!menuOpen) return
     let cancelled = false
     loadGamesMenu().then((C) => {
-      if (!cancelled) setGamesMenuComp(() => C)
+      if (!cancelled) setGamesMenuComp(C)
     })
     return () => {
       cancelled = true
     }
-  }, [menuOpen, friend.name])
+  }, [menuOpen])
 
   useEffect(() => {
     if (!game) return
     let cancelled = false
     loadGameShell().then((C) => {
-      if (!cancelled) setGameShellComp(() => C)
+      if (!cancelled) setGameShellComp(C)
     })
     return () => {
       cancelled = true
@@ -85,15 +88,21 @@ export default function ChatWindow({ me, friend, statuses, onBack, className = '
   async function openGame(id) {
     setMenuOpen(false)
     const Comp = await loadGameComp(id)
-    setGameComp(() => Comp)
+    setGameComp(Comp)
     setGame(id)
   }
 
   function submit(e) {
     e.preventDefault()
     if (!draft.trim()) return
-    sendMessage(draft)
+    sendMessage(draft, replyTo)
     setDraft('')
+    setReplyTo(null)
+    inputRef.current?.focus()
+  }
+
+  function startReply(msg) {
+    setReplyTo(msg)
     inputRef.current?.focus()
   }
 
@@ -154,13 +163,41 @@ export default function ChatWindow({ me, friend, statuses, onBack, className = '
           return (
             <div key={msg.id} className="flex flex-col gap-1.5">
               {showDay && <DateDivider label={day} />}
-              <MessageBubble msg={msg} mine={mine} onDelete={() => deleteMessage(msg.id)} />
+              <MessageBubble
+                msg={msg}
+                mine={mine}
+                onReply={startReply}
+                onReact={toggleReaction}
+                onDeleteForEveryone={deleteForEveryone}
+                onDeleteForMe={deleteForMe}
+              />
             </div>
           )
         })}
 
         {friendTyping && <TypingBubble />}
       </div>
+
+      {/* reply preview bar */}
+      {replyTo && (
+        <div className="flex items-center gap-2 border-t border-line/60 bg-panel2 px-3 py-2 md:px-4">
+          <div className="min-w-0 flex-1 rounded-lg bg-elev px-3 py-1.5">
+            <p className="text-[11.5px] font-bold text-teal">
+              Replying to {replyTo.sender === me.uid ? 'yourself' : friend.name}
+            </p>
+            <p className="truncate text-[12.5px] text-muted">
+              {replyTo.deleted ? 'Deleted message' : replyTo.text}
+            </p>
+          </div>
+          <button
+            onClick={() => setReplyTo(null)}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted transition hover:bg-elev hover:text-cream"
+            title="Cancel reply"
+          >
+            <IconX size={17} />
+          </button>
+        </div>
+      )}
 
       {/* composer */}
       <form

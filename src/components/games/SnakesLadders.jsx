@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useGameState, useJoinGame, updateGame } from '../../hooks/useGame.js'
 import { IconRefresh, IconTrophy, IconDice } from '../Icons.jsx'
 
@@ -9,8 +10,11 @@ const CS = 46 // cell size
 const N = 10
 const W = N * CS
 const H = N * CS
+const HOP_MS = 240 // per-cell hop duration
+const SLIDE_MS = 620 // snake/ladder travel duration
 
 function cellCenter(n) {
+  if (!n) return { x: -100, y: H + 30 } // off-board "start" position below square 1
   const idx = n - 1
   const row = Math.floor(idx / 10) // 0 = bottom row
   const col = row % 2 === 0 ? idx % 10 : 9 - (idx % 10)
@@ -24,6 +28,22 @@ function checkerColor(n) {
   const row = Math.floor(idx / 10)
   const col = row % 2 === 0 ? idx % 10 : 9 - (idx % 10)
   return (row + col) % 2 === 0 ? '#dfe9e5' : '#c8d8d1'
+}
+
+/* Build the full visual path for a move: hop from→to, then snake/ladder glide */
+function buildPath(from, to) {
+  const path = []
+  if (to > from) {
+    for (let n = from + 1; n <= to; n++) path.push({ n, type: 'hop' })
+  } else if (to < from) {
+    for (let n = from - 1; n >= to; n--) path.push({ n, type: 'hop' })
+  } else if (from === to && from > 0) {
+    path.push({ n: to, type: 'bump' })
+  }
+  // snake bite or ladder climb after landing
+  if (SNAKES[to] !== undefined) path.push({ n: SNAKES[to], type: 'snake' })
+  else if (LADDERS[to] !== undefined) path.push({ n: LADDERS[to], type: 'ladder' })
+  return path
 }
 
 /* ---------- board art ---------- */
@@ -109,6 +129,29 @@ export function DiceFace({ value, size = 64, className = '' }) {
   )
 }
 
+/* ---------- animated token ----------
+   Position is driven by style.left/top (CSS translate-free), so the CSS
+   transform-based animations (token-land) never fight the board position. */
+function PlayerToken({ cell, color, offset, moving }) {
+  const { x, y } = cellCenter(cell)
+  return (
+    <g
+      style={{
+        transform: `translate(${x + offset}px, ${y - 6}px)`,
+        transition: moving
+          ? `transform ${HOP_MS}ms cubic-bezier(0.34, 1.3, 0.5, 1)`
+          : moving === false
+            ? `transform ${SLIDE_MS}ms ease-in-out`
+            : 'none',
+      }}
+    >
+      <ellipse cx="0" cy="7" rx="6" ry="2.4" fill="rgba(0,0,0,0.35)" />
+      <circle r="7" fill={color} stroke="#0b141a" strokeWidth="2" />
+      <circle cx="-2" cy="-2.5" r="2" fill="#fff" opacity="0.55" />
+    </g>
+  )
+}
+
 /* ---------- component ---------- */
 
 export default function SnakesLadders({ chatId, me, friend }) {
@@ -128,21 +171,70 @@ export default function SnakesLadders({ chatId, me, friend }) {
   const winner = data?.winner || ''
   const myTurn = mySlot && currentTurn === mySlot && !winner
 
+  /* ---- animation engine: replays every position change as a visible move ---- */
+  // displayed cell per slot (falls back to real position once animating finishes)
+  const [anim, setAnim] = useState({ slot: null, cell: 0, phase: 'idle' })
+  const prevPos = useRef(null)
+
+  useEffect(() => {
+    if (!data) return
+    const prev = prevPos.current
+    prevPos.current = positions
+
+    if (!prev) return // first snapshot — just remember it
+    const movedSlot = ['p1', 'p2'].find((s) => (prev[s] || 0) !== (positions[s] || 0))
+    if (!movedSlot) return
+
+    const from = prev[movedSlot] || 0
+    const to = positions[movedSlot] || 0
+    const steps = buildPath(from, to)
+    if (!steps.length) return
+
+    let i = 0
+    let cancelled = false
+    setAnim({ slot: movedSlot, cell: from, phase: 'hop' })
+
+    function nextStep() {
+      if (cancelled || i >= steps.length) {
+        setAnim({ slot: null, cell: 0, phase: 'idle' })
+        return
+      }
+      const step = steps[i]
+      i++
+      const isSlide = step.type === 'snake' || step.type === 'ladder'
+      setAnim({ slot: movedSlot, cell: step.n, phase: isSlide ? 'slide' : 'hop' })
+      setTimeout(nextStep, isSlide ? SLIDE_MS + 120 : HOP_MS)
+    }
+    nextStep()
+
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positions.p1, positions.p2])
+
+  // roll writes from/to so BOTH players' clients animate the same path
   function roll() {
     if (!myTurn || !mySlot) return
     const current = positions[mySlot] || 0
     const value = Math.floor(Math.random() * 6) + 1
     let next = current + value
-    if (next > 100) next = current
+    if (next > 100) next = current // exact landing required
     else next = SNAKES[next] ?? LADDERS[next] ?? next
-    const bounced = value !== Math.abs(next - current)
 
     updateGame('ladsnake', chatId, {
       positions: { ...positions, [mySlot]: next },
       lastRoll: value,
       currentTurn: next === 100 ? mySlot : oppSlot,
       winner: next === 100 ? mySlot : '',
-      lastEvent: next === 100 ? 'win' : bounced ? (SNAKES[next - (next - current) + (next - current)] ? 'snake' : 'ladder') : '',
+      lastEvent:
+        next === 100
+          ? 'win'
+          : SNAKES[current + value] !== undefined
+            ? 'snake'
+            : LADDERS[current + value] !== undefined
+              ? 'ladder'
+              : '',
     })
   }
 
@@ -156,12 +248,15 @@ export default function SnakesLadders({ chatId, me, friend }) {
     })
   }
 
-  const eventMsg =
-    winner
-      ? winner === mySlot
-        ? 'You reached 100 first! 🏆'
-        : `${friend.name} reached 100 first`
-      : lastEventText(data, mySlot, friend)
+  const eventMsg = winner
+    ? winner === mySlot
+      ? 'You reached 100 first! 🏆'
+      : `${friend.name} reached 100 first`
+    : lastEventText(data, mySlot, friend)
+
+  // what each token should display: animated cell while moving, real cell otherwise
+  const shownCell = (slot) => (anim.slot === slot ? anim.cell : positions[slot] || 0)
+  const isMoving = (slot) => anim.slot === slot
 
   return (
     <div className="flex w-full max-w-xl flex-col items-center gap-3">
@@ -194,13 +289,12 @@ export default function SnakesLadders({ chatId, me, friend }) {
           const col = row % 2 === 0 ? idx % 10 : 9 - (idx % 10)
           const x = col * CS
           const y = H - (row * CS + CS)
-          const isSnakeHead = SNAKES[n] !== undefined && Object.values(SNAKES).includes(n)
-          const isSnakeTailStart = SNAKES[n] !== undefined
           const isLadderBottom = LADDERS[n] !== undefined
+          const isSnakeHead = Object.values(SNAKES).includes(n)
           return (
             <g key={n}>
               <rect x={x} y={y} width={CS} height={CS} fill={checkerColor(n)} stroke="#111b21" strokeWidth="1" />
-              {(isSnakeTailStart || isLadderBottom) && (
+              {(isSnakeHead || isLadderBottom) && (
                 <circle cx={x + CS / 2} cy={y + CS / 2} r={CS * 0.3} fill={isLadderBottom ? '#f59e0b' : '#16a34a'} opacity="0.28" />
               )}
               <text x={x + 4} y={y + 12} fontSize="8.5" fontWeight="700" fill="#334155">
@@ -212,7 +306,7 @@ export default function SnakesLadders({ chatId, me, friend }) {
 
         {/* goal star on 100 */}
         <g opacity="0.9">
-          <text x={W - CS / 2} y={CS - CS / 2 + 5} textAnchor="middle" fontSize="16">⭐</text>
+          <text x={W - CS / 2} y={CS / 2 + 5} textAnchor="middle" fontSize="16">⭐</text>
         </g>
 
         {/* ladders under snakes */}
@@ -223,9 +317,9 @@ export default function SnakesLadders({ chatId, me, friend }) {
           <Snake key={`S${head}`} head={Number(head)} tail={tail} />
         ))}
 
-        {/* tokens */}
-        <PlayerToken n={positions.p1 || 0} color="#ff6b6b" offset={-8} />
-        <PlayerToken n={positions.p2 || 0} color="#53bdeb" offset={8} />
+        {/* tokens — slot colors match the Side chips (me = red, friend = blue) */}
+        <PlayerToken cell={shownCell('p1')} color="#ff6b6b" offset={-8} moving={isMoving('p1') ? anim.phase : false} />
+        <PlayerToken cell={shownCell('p2')} color="#53bdeb" offset={8} moving={isMoving('p2') ? anim.phase : false} />
       </svg>
 
       {/* status */}
@@ -253,18 +347,6 @@ export default function SnakesLadders({ chatId, me, friend }) {
         </button>
       )}
     </div>
-  )
-}
-
-function PlayerToken({ n, color, offset }) {
-  if (!n) return null
-  const { x, y } = cellCenter(n)
-  return (
-    <g style={{ transition: 'transform 400ms ease' }} className="animate-pop" transform={`translate(${x + offset} ${y - 6})`}>
-      <ellipse cx="0" cy="7" rx="6" ry="2.4" fill="rgba(0,0,0,0.35)" />
-      <circle r="7" fill={color} stroke="#0b141a" strokeWidth="2" />
-      <circle cx="-2" cy="-2.5" r="2" fill="#fff" opacity="0.55" />
-    </g>
   )
 }
 

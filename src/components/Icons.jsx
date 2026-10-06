@@ -78,6 +78,13 @@ export const IconChecks = (p) => (
   </Svg>
 )
 
+export const IconReply = (p) => (
+  <Svg {...p}>
+    <path d="M9 14 4 9l5-5" />
+    <path d="M4 9h10a6 6 0 0 1 6 6v3" />
+  </Svg>
+)
+
 export const IconTrash = (p) => (
   <Svg {...p}>
     <path d="M3 6h18" />

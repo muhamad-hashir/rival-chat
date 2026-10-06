@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { useGameState, useJoinGame, updateGame } from '../../hooks/useGame.js'
 import { ref, set } from 'firebase/database'
 import { db } from '../../firebase.js'
@@ -64,12 +65,18 @@ export default function RPS({ chatId, me, friend }) {
 
   const myChoice = mySlot ? choices[mySlot] : null
   const oppChoice = oppSlot ? choices[oppSlot] : null
+  // WEAPONS STAY HIDDEN until BOTH players have locked in
   const revealed = Boolean(myChoice) && Boolean(oppChoice)
 
-  // resolve round: only p1 writes (same as original app)
-  if (revealed && mySlot === 'p1' && !matchWinner) {
-    const result = myChoice === oppChoice ? 'draw' : BEATS[choices.p1] === choices.p2 ? 'p1' : 'p2'
-    setTimeout(() => {
+  // resolve round: only p1 writes, once per round
+  const resolvedRef = useRef('')
+  useEffect(() => {
+    if (!revealed || mySlot !== 'p1' || matchWinner) return
+    const roundSig = `${choices.p1}-${choices.p2}-${score.p1}-${score.p2}`
+    if (resolvedRef.current === roundSig) return
+    resolvedRef.current = roundSig
+    const result = choices.p1 === choices.p2 ? 'draw' : BEATS[choices.p1] === choices.p2 ? 'p1' : 'p2'
+    const timer = setTimeout(() => {
       const newScore = {
         p1: (score.p1 || 0) + (result === 'p1' ? 1 : 0),
         p2: (score.p2 || 0) + (result === 'p2' ? 1 : 0),
@@ -80,14 +87,16 @@ export default function RPS({ chatId, me, friend }) {
         matchWinner: newScore.p1 >= 3 ? 'p1' : newScore.p2 >= 3 ? 'p2' : '',
       })
     }, 1600)
-  }
+    return () => clearTimeout(timer)
+  }, [revealed, mySlot, matchWinner, choices, score, chatId])
 
   function pick(choice) {
-    if (!mySlot || myChoice || matchWinner) return
+    if (!mySlot || myChoice || matchWinner || revealed) return
     set(ref(db, `chats/${chatId}/games/rps/choices/${mySlot}`), choice)
   }
 
   function reset() {
+    resolvedRef.current = ''
     updateGame('rps', chatId, {
       choices: { p1: '', p2: '' },
       score: { p1: 0, p2: 0 },
@@ -114,7 +123,7 @@ export default function RPS({ chatId, me, friend }) {
           ? 'You won this round!'
           : `${friend.name} won this round`
       : myChoice
-        ? 'Waiting for opponent…'
+        ? 'Locked in — waiting for opponent…'
         : 'Pick your weapon'
 
   const bannerTone = matchWinner
@@ -141,13 +150,14 @@ export default function RPS({ chatId, me, friend }) {
 
       {/* battle stage */}
       <div className="relative flex w-full items-center justify-between gap-2 rounded-3xl border border-line/60 bg-gradient-to-b from-elev/60 to-panel/80 px-6 py-6">
-        <Hand name={me.displayName || 'You'} choice={myChoice} label={LABEL[myChoice]} reveal={revealed} />
+        <Hand name={me.displayName || 'You'} choice={myChoice} label={myChoice ? LABEL[myChoice] : null} reveal={revealed} />
         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
           <div className={`flex h-11 w-11 items-center justify-center rounded-full text-sm font-extrabold shadow-lg transition ${revealed ? 'bg-amber text-ink scale-110' : 'bg-panel2 text-muted'}`}>
             VS
           </div>
         </div>
-        <Hand name={friend.name} choice={oppChoice} label={revealed ? LABEL[oppChoice] : null} reveal={revealed} flip />
+        {/* opponent's hand stays a "?" until both weapons are locked */}
+        <Hand name={friend.name} choice={revealed ? oppChoice : null} label={revealed ? LABEL[oppChoice] : null} reveal={revealed} flip />
       </div>
 
       {/* status banner */}

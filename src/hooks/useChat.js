@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ref, push, onValue, update, set } from 'firebase/database'
+import { ref, push, onValue, update, set, remove } from 'firebase/database'
 import { db } from '../firebase.js'
 import { chatIdFor } from '../utils.js'
 
@@ -20,10 +20,11 @@ export function useChat(me, friend) {
       const val = snap.val() || {}
       const list = Object.entries(val).map(([id, m]) => ({ id, ...m }))
       list.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
-      setMessages(list)
+      // hide messages that I deleted "for me"
+      setMessages(list.filter((m) => !(m.deletedFor && m.deletedFor[me.uid])))
     })
     return () => unsub()
-  }, [chatId])
+  }, [chatId, me])
 
   // Mark incoming messages read
   useEffect(() => {
@@ -49,15 +50,26 @@ export function useChat(me, friend) {
     return () => unsub()
   }, [chatId, friend])
 
-  function sendMessage(text) {
+  function sendMessage(text, replyTo = null) {
     if (!chatId || !text.trim()) return
-    push(ref(db, `chats/${chatId}/messages`), {
+    const msg = {
       text: text.trim(),
       sender: me.uid,
       senderName: me.displayName || 'Unknown',
       timestamp: Date.now(),
       read: false,
-    })
+    }
+    if (replyTo) {
+      // snapshot of the quoted message — survives the original being deleted
+      msg.replyTo = {
+        id: replyTo.id,
+        text: (replyTo.text || '').slice(0, 140),
+        sender: replyTo.sender,
+        senderName: replyTo.senderName || '',
+        deleted: Boolean(replyTo.deleted),
+      }
+    }
+    push(ref(db, `chats/${chatId}/messages`), msg)
     set(ref(db, `chats/${chatId}/typing/${me.uid}`), false)
   }
 
@@ -70,17 +82,38 @@ export function useChat(me, friend) {
     }, 1500)
   }
 
-  function deleteMessage(id) {
+  /** Delete for everyone (sender only): tombstone like WhatsApp */
+  function deleteForEveryone(id) {
     if (!chatId) return
-    return new Promise((resolve) => {
-      if (window.confirm('Delete this message?')) {
-        update(ref(db, `chats/${chatId}/messages/${id}`), {
-          text: 'This message was deleted',
-          deleted: true,
-        }).finally(resolve)
-      } else resolve()
+    return update(ref(db, `chats/${chatId}/messages/${id}`), {
+      text: '',
+      deleted: true,
+      reactions: null,
     })
   }
 
-  return { messages, friendTyping, sendMessage, notifyTyping, deleteMessage }
+  /** Delete for me: hides the message only for this user */
+  function deleteForMe(id) {
+    if (!chatId) return
+    return set(ref(db, `chats/${chatId}/messages/${id}/deletedFor/${me.uid}`), true)
+  }
+
+  /** Toggle an emoji reaction; one reaction per user (last tap wins) */
+  function toggleReaction(id, emoji) {
+    if (!chatId) return
+    const msg = messages.find((m) => m.id === id)
+    const current = msg?.reactions?.[me.uid]
+    const next = current === emoji ? null : emoji
+    return set(ref(db, `chats/${chatId}/messages/${id}/reactions/${me.uid}`), next)
+  }
+
+  return {
+    messages,
+    friendTyping,
+    sendMessage,
+    notifyTyping,
+    deleteForEveryone,
+    deleteForMe,
+    toggleReaction,
+  }
 }
